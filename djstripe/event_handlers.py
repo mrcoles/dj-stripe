@@ -300,6 +300,8 @@ def _handle_crud_like_event(
     :returns: The object (if any) and the event CrudType.
     :rtype: Tuple[models.StripeModel, CrudType]
     """
+    stripe_account = event.stripe_account
+
     data = data or event.data
     id = id or data.get("object", {}).get("id", None)
 
@@ -338,7 +340,8 @@ def _handle_crud_like_event(
         kwargs = {"id": id}
         if hasattr(target_cls, "customer"):
             kwargs["customer"] = customer
-        data = target_cls(**kwargs).api_retrieve()
-        obj = target_cls.sync_from_stripe_data(data)
+        data = target_cls(**kwargs).api_retrieve(stripe_account=stripe_account)
+        obj = target_cls.sync_from_stripe_data(
+            data, stripe_account=stripe_account)
 
     return obj, crud_type

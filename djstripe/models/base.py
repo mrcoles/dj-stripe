@@ -367,7 +367,7 @@ class StripeModel(models.Model):
         """
         return data["object"] == cls.stripe_class.OBJECT_NAME
 
-    def _attach_objects_hook(self, cls, data):
+    def _attach_objects_hook(self, cls, data, stripe_account=None):
         """
         Gets called by this object's create and sync methods just before save.
         Use this to populate fields before the model is saved.
@@ -376,8 +376,9 @@ class StripeModel(models.Model):
         :param data: The data dictionary received from the Stripe API.
         :type data: dict
         """
-
-        pass
+        account_model = self.get_djstripe_account_model()
+        if cls is not account_model and stripe_account and not self.account:
+            self.account_id = account_model.stripe_account_to_djstripe_id(stripe_account)
 
     def _attach_objects_post_save_hook(self, cls, data, pending_relations=None):
         """
@@ -445,7 +446,7 @@ class StripeModel(models.Model):
                 stripe_account=stripe_account,
             )
         )
-        instance._attach_objects_hook(cls, data)
+        instance._attach_objects_hook(cls, data, stripe_account=stripe_account)
 
         if save:
             instance.save(force_insert=True)
@@ -557,52 +558,62 @@ class StripeModel(models.Model):
             return cls.stripe_objects.get(id=id_), False
 
     @classmethod
-    def _stripe_object_to_customer(cls, target_cls, data):
+    def _stripe_object_to_customer(cls, target_cls, data, stripe_account=None):
         """
         Search the given manager for the Customer matching this object's
         ``customer`` field.
         :param target_cls: The target class
-        :type target_cls: Customer
+        :type target_cls: ClassVar[Customer]
         :param data: stripe object
         :type data: dict
         """
 
         if "customer" in data and data["customer"]:
-            return target_cls._get_or_create_from_stripe_object(data, "customer")[0]
+            return target_cls._get_or_create_from_stripe_object(
+                data,
+                "customer",
+                stripe_account=stripe_account,
+            )[0]
 
     @classmethod
-    def _stripe_object_to_default_tax_rates(cls, target_cls, data):
+    def _stripe_object_to_default_tax_rates(cls, target_cls, data, instance):
         """
         Retrieves TaxRates for a Subscription or Invoice
         :param target_cls:
         :param data:
         :param instance:
-        :type instance: Union[djstripe.models.Invoice, djstripe.models.Subscription]
+        :type instance: Union[djstripe.models.Invoice, djstripe.models.UpcomingInvoice djstripe.models.Subscription]
         :return:
         """
+        stripe_account = instance.stripe_account
+
         tax_rates = []
 
         for tax_rate_data in data.get("default_tax_rates", []):
             tax_rate, _ = target_cls._get_or_create_from_stripe_object(
-                tax_rate_data, refetch=False
+                tax_rate_data, refetch=False, stripe_account=stripe_account
             )
             tax_rates.append(tax_rate)
 
         return tax_rates
 
     @classmethod
-    def _stripe_object_to_tax_rates(cls, target_cls, data):
+    def _stripe_object_to_tax_rates(cls, target_cls, data, instance):
         """
         Retrieves TaxRates for a SubscriptionItem or InvoiceItem
         :param target_cls:
         :param data:
+        :param instance:
+        :type instance: Union[djstripe.models.Invoice, djstripe.models.SubscriptionItem]
         :return:
         """
+        stripe_account = instance.stripe_account
+
         tax_rates = []
 
         for tax_rate_data in data.get("tax_rates", []):
             tax_rate, _ = target_cls._get_or_create_from_stripe_object(
-                tax_rate_data, refetch=False
+                tax_rate_data, refetch=False, stripe_account=stripe_account
             )
             tax_rates.append(tax_rate)
 
@@ -613,12 +624,16 @@ class StripeModel(models.Model):
         """
         Set total tax amounts on Invoice instance
         :param target_cls:
+        :type target_cls: ClassVar[djstripe.models.Invoice]
         :param data:
         :param instance:
         :type instance: djstripe.models.Invoice
         :return:
         """
         from .billing import TaxRate
+
+        stripe_account = instance.stripe_account
+        djstripe_account_id = instance.account_id
 
         pks = []
 
@@ -628,7 +643,7 @@ class StripeModel(models.Model):
                 tax_rate_data = {"tax_rate": tax_rate_data}
 
             tax_rate, _ = TaxRate._get_or_create_from_stripe_object(
-                tax_rate_data, field_name="tax_rate", refetch=True
+                tax_rate_data, field_name="tax_rate", refetch=True, stripe_account=stripe_account
             )
             tax_amount, _ = target_cls.objects.update_or_create(
                 invoice=instance,
@@ -636,6 +651,7 @@ class StripeModel(models.Model):
                 defaults={
                     "amount": tax_amount_data["amount"],
                     "inclusive": tax_amount_data["inclusive"],
+                    "account_id": djstripe_account_id,
                 },
             )
 
@@ -688,8 +704,10 @@ class StripeModel(models.Model):
             line.setdefault("customer", invoice.customer.id)
             line.setdefault("date", int(dateformat.format(invoice.created, "U")))
 
+            stripe_account = invoice.stripe_account
+
             item, _ = target_cls._get_or_create_from_stripe_object(
-                line, refetch=False, save=save
+                line, refetch=False, save=save, stripe_account=stripe_account,
             )
             invoiceitems.append(item)
 
@@ -714,10 +732,12 @@ class StripeModel(models.Model):
         if not items:
             return []
 
+        stripe_account = subscription.stripe_account
+
         subscriptionitems = []
         for item_data in items.auto_paging_iter():
             item, _ = target_cls._get_or_create_from_stripe_object(
-                item_data, refetch=False
+                item_data, refetch=False, stripe_account=stripe_account
             )
             subscriptionitems.append(item)
 
@@ -740,10 +760,13 @@ class StripeModel(models.Model):
         if not refunds:
             return []
 
+        stripe_account = charge.stripe_account
+
         refund_objs = []
         for refund_data in refunds.auto_paging_iter():
             item, _ = target_cls._get_or_create_from_stripe_object(
-                refund_data, refetch=False
+                refund_data, refetch=False,
+                stripe_account=stripe_account
             )
             refund_objs.append(item)
 
@@ -754,7 +777,7 @@ class StripeModel(models.Model):
             setattr(self, attr, value)
 
     @classmethod
-    def sync_from_stripe_data(cls, data):
+    def sync_from_stripe_data(cls, data, stripe_account=None):
         """
         Syncs this object from the stripe data provided.
 
@@ -762,6 +785,9 @@ class StripeModel(models.Model):
 
         :param data: stripe object
         :type data: dict
+        :param stripe_account: The optional connected account \
+            for which this data belongs to.
+        :type stripe_account: Optional[string]
         :rtype: cls
         """
         current_ids = set()
@@ -773,12 +799,13 @@ class StripeModel(models.Model):
             current_ids.add(data_id)
 
         instance, created = cls._get_or_create_from_stripe_object(
-            data, current_ids=current_ids
+            data, current_ids=current_ids, stripe_account=stripe_account
         )
 
         if not created:
-            instance._sync(cls._stripe_object_to_record(data))
-            instance._attach_objects_hook(cls, data)
+            instance._sync(cls._stripe_object_to_record(
+                data, stripe_account=stripe_account))
+            instance._attach_objects_hook(cls, data, stripe_account=stripe_account)
             instance.save()
             instance._attach_objects_post_save_hook(cls, data)
 

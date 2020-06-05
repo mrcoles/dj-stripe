@@ -59,6 +59,8 @@ class DjstripeUpcomingInvoiceTotalTaxAmount(models.Model):
     As per DjstripeInvoiceTotalTaxAmount, except for UpcomingInvoice
     """
 
+    # TODO(connect) - how is account handled with this?
+
     invoice = models.ForeignKey(
         # Don't define related_name since property is defined in UpcomingInvoice
         "UpcomingInvoice",
@@ -550,6 +552,7 @@ class BaseInvoice(StripeModel):
         subscription_proration_date=None,
         subscription_quantity=None,
         subscription_trial_end=None,
+        stripe_account=None,
         **kwargs
     ):
         """
@@ -591,20 +594,26 @@ class BaseInvoice(StripeModel):
         :param subscription_trial_end: If provided, the invoice returned will \
         preview updating or creating a subscription with that trial end.
         :type subscription_trial_end: datetime
+        :param stripe_account: The optional connected account \
+            for which this request is being made.
+        :type stripe_account: str
         :returns: The upcoming preview invoice.
         :rtype: UpcomingInvoice
         """
 
         # Convert Customer to id
         if customer is not None and isinstance(customer, StripeModel):
+            # TODO(connect)(checkrep) - verify customer.account matches stripe_account?
             customer = customer.id
 
         # Convert Subscription to id
         if subscription is not None and isinstance(subscription, StripeModel):
+            # TODO(connect)(checkrep) - verify subscription.account matches stripe_account?
             subscription = subscription.id
 
         # Convert Plan to id
         if subscription_plan is not None and isinstance(subscription_plan, StripeModel):
+            # TODO(connect)(checkrep) - verify subscription_plan.account matches stripe_account?
             subscription_plan = subscription_plan.id
 
         try:
@@ -618,6 +627,7 @@ class BaseInvoice(StripeModel):
                 subscription_proration_date=subscription_proration_date,
                 subscription_quantity=subscription_quantity,
                 subscription_trial_end=subscription_trial_end,
+                stripe_account=stripe_account,
                 **kwargs
             )
         except InvalidRequestError as exc:
@@ -629,7 +639,7 @@ class BaseInvoice(StripeModel):
         upcoming_stripe_invoice["id"] = "upcoming"
 
         return UpcomingInvoice._create_from_stripe_object(
-            upcoming_stripe_invoice, save=False
+            upcoming_stripe_invoice, save=False, stripe_account=stripe_account
         )
 
     def retry(self):
@@ -644,7 +654,8 @@ class BaseInvoice(StripeModel):
             updated_stripe_invoice = (
                 stripe_invoice.pay()
             )  # pay() throws an exception if the charge is not successful.
-            type(self).sync_from_stripe_data(updated_stripe_invoice)
+            stripe_account = self.stripe_account
+            type(self).sync_from_stripe_data(updated_stripe_invoice, stripe_account=stripe_account)
             return True
         return False
 
@@ -744,7 +755,8 @@ class Invoice(BaseInvoice):
         )
 
         self.default_tax_rates.set(
-            cls._stripe_object_to_default_tax_rates(target_cls=TaxRate, data=data)
+            cls._stripe_object_to_default_tax_rates(
+                target_cls=TaxRate, data=data, instance=self)
         )
 
         cls._stripe_object_set_total_tax_amounts(
@@ -781,8 +793,8 @@ class UpcomingInvoice(BaseInvoice):
     def get_stripe_dashboard_url(self):
         return ""
 
-    def _attach_objects_hook(self, cls, data):
-        super()._attach_objects_hook(cls, data)
+    def _attach_objects_hook(self, cls, data, stripe_account=None):
+        super()._attach_objects_hook(cls, data, stripe_account=stripe_account)
         self._invoiceitems = cls._stripe_object_to_invoice_items(
             target_cls=InvoiceItem, data=data, invoice=self
         )
@@ -793,8 +805,10 @@ class UpcomingInvoice(BaseInvoice):
         )
 
         self._default_tax_rates = cls._stripe_object_to_default_tax_rates(
-            target_cls=TaxRate, data=data
+            target_cls=TaxRate, data=data, instance=self
         )
+
+        stripe_account = self.stripe_account
 
         total_tax_amounts = []
 
@@ -804,7 +818,7 @@ class UpcomingInvoice(BaseInvoice):
                 tax_rate_data = {"tax_rate": tax_rate_data}
 
             tax_rate, _ = TaxRate._get_or_create_from_stripe_object(
-                tax_rate_data, field_name="tax_rate", refetch=True
+                tax_rate_data, field_name="tax_rate", refetch=True, stripe_account=stripe_account
             )
 
             tax_amount = DjstripeUpcomingInvoiceTotalTaxAmount(
@@ -946,6 +960,7 @@ class InvoiceItem(StripeModel):
 
     @classmethod
     def _manipulate_stripe_object_hook(cls, data):
+        data = super()._manipulate_stripe_object_hook(data)
         data["period_start"] = data["period"]["start"]
         data["period_end"] = data["period"]["end"]
 
@@ -959,11 +974,12 @@ class InvoiceItem(StripeModel):
         if self.pk:
             # only call .set() on saved instance (ie don't on items of UpcomingInvoice)
             self.tax_rates.set(
-                cls._stripe_object_to_tax_rates(target_cls=TaxRate, data=data)
+                cls._stripe_object_to_tax_rates(
+                    target_cls=TaxRate, data=data, instance=self)
             )
 
     @classmethod
-    def sync_from_stripe_data(cls, data):
+    def sync_from_stripe_data(cls, data, stripe_account=None):
         invoice_data = data.get("invoice")
 
         if invoice_data:
@@ -974,9 +990,13 @@ class InvoiceItem(StripeModel):
                 if invoice_id == invoice_data:
                     # we only have the id, fetch the full data
                     invoice_data = Invoice(id=invoice_id).api_retrieve()
-                Invoice.sync_from_stripe_data(data=invoice_data)
+                Invoice.sync_from_stripe_data(
+                    data=invoice_data, stripe_account=stripe_account)
 
-        return super().sync_from_stripe_data(data)
+        return super().sync_from_stripe_data(
+            data,
+            stripe_account=stripe_account
+        )
 
     def __str__(self):
         if self.plan and self.plan.product:
@@ -1146,7 +1166,7 @@ class Plan(StripeModel):
             return cls.create(**kwargs), True
 
     @classmethod
-    def create(cls, **kwargs):
+    def create(cls, stripe_account=None, **kwargs):
         # A few minor things are changed in the api-version of the create call
         api_kwargs = dict(kwargs)
         api_kwargs["amount"] = int(api_kwargs["amount"] * 100)
@@ -1154,8 +1174,8 @@ class Plan(StripeModel):
         if isinstance(api_kwargs.get("product"), StripeModel):
             api_kwargs["product"] = api_kwargs["product"].id
 
-        stripe_plan = cls._api_create(**api_kwargs)
-        plan = cls.sync_from_stripe_data(stripe_plan)
+        stripe_plan = cls._api_create(stripe_account=stripe_account, **api_kwargs)
+        plan = cls.sync_from_stripe_data(stripe_plan, stripe_account=stripe_account)
 
         return plan
 
@@ -1501,11 +1521,13 @@ class Subscription(StripeModel):
 
         stripe_subscription = self.api_retrieve()
 
+        stripe_account = self.stripe_account
+
         for kwarg, value in kwargs.items():
             if value is not None:
                 setattr(stripe_subscription, kwarg, value)
 
-        return Subscription.sync_from_stripe_data(stripe_subscription.save())
+        return Subscription.sync_from_stripe_data(stripe_subscription.save(), stripe_account=stripe_account)
 
     def extend(self, delta):
         """
@@ -1582,7 +1604,9 @@ class Subscription(StripeModel):
                 else:
                     raise
 
-        return Subscription.sync_from_stripe_data(stripe_subscription)
+        stripe_account = self.stripe_account
+
+        return Subscription.sync_from_stripe_data(stripe_subscription, stripe_account=stripe_account)
 
     def reactivate(self):
         """
@@ -1599,8 +1623,9 @@ class Subscription(StripeModel):
         stripe_subscription = self.api_retrieve()
         stripe_subscription.plan = self.plan.id
         stripe_subscription.cancel_at_period_end = False
+        stripe_account = self.stripe_account
 
-        return Subscription.sync_from_stripe_data(stripe_subscription.save())
+        return Subscription.sync_from_stripe_data(stripe_subscription.save(), stripe_account=stripe_account)
 
     def is_period_current(self):
         """
@@ -1662,7 +1687,8 @@ class Subscription(StripeModel):
         )
 
         self.default_tax_rates.set(
-            cls._stripe_object_to_default_tax_rates(target_cls=TaxRate, data=data)
+            cls._stripe_object_to_default_tax_rates(
+                target_cls=TaxRate, data=data, instance=self)
         )
 
 
@@ -1713,7 +1739,8 @@ class SubscriptionItem(StripeModel):
         )
 
         self.tax_rates.set(
-            cls._stripe_object_to_tax_rates(target_cls=TaxRate, data=data)
+            cls._stripe_object_to_tax_rates(
+                target_cls=TaxRate, data=data, instance=self)
         )
 
 

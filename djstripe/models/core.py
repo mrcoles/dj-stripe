@@ -300,7 +300,9 @@ class Charge(StripeModel):
             self.fraud_details and list(self.fraud_details.values())[0] == "fraudulent"
         )
 
-    def _attach_objects_hook(self, cls, data):
+    def _attach_objects_hook(self, cls, data, stripe_account=None):
+        super()._attach_objects_hook(cls, data, stripe_account=stripe_account)
+
         from .payment_methods import DjstripePaymentMethod
 
         # Set the account on this object.
@@ -320,8 +322,11 @@ class Charge(StripeModel):
         if not source_type:
             return
 
+        stripe_account = self.stripe_account
+
         self.source, _ = DjstripePaymentMethod._get_or_create_source(
-            data=source_data, source_type=source_type
+            data=source_data, source_type=source_type,
+            stripe_account=stripe_account,
         )
 
     def _calculate_refund_amount(self, amount=None):
@@ -357,7 +362,8 @@ class Charge(StripeModel):
         charge_obj = self.api_retrieve().refund(
             amount=self._calculate_refund_amount(amount=amount), reason=reason
         )
-        return self.__class__.sync_from_stripe_data(charge_obj)
+        stripe_account = self.stripe_account
+        return self.__class__.sync_from_stripe_data(charge_obj, stripe_account=stripe_account)
 
     def capture(self):
         """
@@ -369,7 +375,8 @@ class Charge(StripeModel):
         """
 
         captured_charge = self.api_retrieve().capture()
-        return self.__class__.sync_from_stripe_data(captured_charge)
+        stripe_account = self.stripe_account
+        return self.__class__.sync_from_stripe_data(captured_charge, stripe_account=stripe_account)
 
     @classmethod
     def _stripe_object_destination_to_account(cls, target_cls, data):
@@ -533,6 +540,7 @@ class Customer(StripeModel):
 
     @classmethod
     def _manipulate_stripe_object_hook(cls, data):
+        data = super()._manipulate_stripe_object_hook(data)
         discount = data.get("discount")
         if discount:
             data["coupon_start"] = discount["start"]
@@ -563,8 +571,13 @@ class Customer(StripeModel):
         :type livemode: bool
         """
 
+        kwargs = {}
+        if stripe_account:
+            # Double underscore to match 'acct_'
+            kwargs['account__id'] = stripe_account
+
         try:
-            return Customer.objects.get(subscriber=subscriber, livemode=livemode), False
+            return Customer.objects.get(subscriber=subscriber, livemode=livemode, **kwargs), False
         except Customer.DoesNotExist:
             action = "create:{}".format(subscriber.pk)
             idempotency_key = djstripe_settings.get_idempotency_key(
@@ -586,12 +599,17 @@ class Customer(StripeModel):
         if subscriber_key not in ("", None):
             metadata[subscriber_key] = subscriber.pk
 
+        def _get_account_id():
+            # callables can be passed into `defaults`
+            return Account.stripe_account_to_djstripe_id(stripe_account)
+
         stripe_customer = cls._api_create(
             email=subscriber.email,
             idempotency_key=idempotency_key,
             metadata=metadata,
             stripe_account=stripe_account,
         )
+        # TODO - should this create, then get instead, since the intent here is create
         customer, created = Customer.objects.get_or_create(
             id=stripe_customer["id"],
             defaults={
@@ -599,6 +617,7 @@ class Customer(StripeModel):
                 "livemode": stripe_customer["livemode"],
                 "balance": stripe_customer.get("balance", 0),
                 "delinquent": stripe_customer.get("delinquent", False),
+                "account_id": _get_account_id,
             },
         )
 
@@ -708,6 +727,8 @@ class Customer(StripeModel):
         if isinstance(plan, StripeModel):
             plan = plan.id
 
+        stripe_account = self.stripe_account
+
         stripe_subscription = Subscription._api_create(
             plan=plan,
             customer=self.id,
@@ -720,12 +741,16 @@ class Customer(StripeModel):
             trial_end=trial_end,
             trial_from_plan=trial_from_plan,
             trial_period_days=trial_period_days,
+            stripe_account=stripe_account,
         )
 
         if charge_immediately:
             self.send_invoice()
 
-        return Subscription.sync_from_stripe_data(stripe_subscription)
+        return Subscription.sync_from_stripe_data(
+            stripe_subscription,
+            stripe_account=stripe_account,
+        )
 
     def charge(
         self,
@@ -791,6 +816,8 @@ class Customer(StripeModel):
         if source and isinstance(source, StripeModel):
             source = source.id
 
+        stripe_account = self.stripe_account
+
         stripe_charge = Charge._api_create(
             amount=int(amount * 100),  # Convert dollars into cents
             currency=currency,
@@ -806,9 +833,10 @@ class Customer(StripeModel):
             source=source,
             statement_descriptor=statement_descriptor,
             idempotency_key=idempotency_key,
+            stripe_account=stripe_account,
         )
 
-        return Charge.sync_from_stripe_data(stripe_charge)
+        return Charge.sync_from_stripe_data(stripe_charge, stripe_account=stripe_account)
 
     def add_invoice_item(
         self,
@@ -872,6 +900,8 @@ class Customer(StripeModel):
         if subscription is not None and isinstance(subscription, StripeModel):
             subscription = subscription.id
 
+        stripe_account = self.stripe_account
+
         stripe_invoiceitem = InvoiceItem._api_create(
             amount=int(amount * 100),  # Convert dollars into cents
             currency=currency,
@@ -881,9 +911,10 @@ class Customer(StripeModel):
             invoice=invoice,
             metadata=metadata,
             subscription=subscription,
+            stripe_account=stripe_account,
         )
 
-        return InvoiceItem.sync_from_stripe_data(stripe_invoiceitem)
+        return InvoiceItem.sync_from_stripe_data(stripe_invoiceitem, stripe_account=stripe_account)
 
     def add_card(self, source, set_default=True):
         """
@@ -930,8 +961,10 @@ class Customer(StripeModel):
         """
         from .payment_methods import PaymentMethod
 
+
+        stripe_account = self.stripe_account
         stripe_customer = self.api_retrieve()
-        payment_method = PaymentMethod.attach(payment_method, stripe_customer)
+        payment_method = PaymentMethod.attach(payment_method, stripe_customer, stripe_account=stripe_account)
 
         if set_default:
             stripe_customer["invoice_settings"][
@@ -943,7 +976,7 @@ class Customer(StripeModel):
             # 1) sets self.default_payment_method (we rely on logic in
             # Customer._manipulate_stripe_object_hook to do this)
             # 2) updates self.invoice_settings.default_payment_methods
-            self.sync_from_stripe_data(stripe_customer)
+            self.sync_from_stripe_data(stripe_customer, stripe_account=stripe_account)
             self.refresh_from_db()
 
         return payment_method
@@ -1149,7 +1182,8 @@ class Customer(StripeModel):
         stripe_customer = self.api_retrieve()
         stripe_customer["coupon"] = coupon
         stripe_customer.save(idempotency_key=idempotency_key)
-        return self.__class__.sync_from_stripe_data(stripe_customer)
+        stripe_account = self.stripe_account
+        return self.__class__.sync_from_stripe_data(stripe_customer, stripe_account=stripe_account)
 
     def upcoming_invoice(self, **kwargs):
         """ Gets the upcoming preview invoice (singular) for this customer.
@@ -1176,6 +1210,8 @@ class Customer(StripeModel):
 
         save = False
 
+        stripe_account = self.stripe_account
+
         customer_sources = data.get("sources")
         if customer_sources:
             # Have to create sources before we handle the default_source
@@ -1184,7 +1220,7 @@ class Customer(StripeModel):
             sources = {}
             for source in customer_sources["data"]:
                 obj, _ = DjstripePaymentMethod._get_or_create_source(
-                    source, source["object"]
+                    source, source["object"], stripe_account=stripe_account
                 )
                 sources[source["id"]] = obj
 
@@ -1202,7 +1238,7 @@ class Customer(StripeModel):
         discount = data.get("discount")
         if discount:
             coupon, _created = Coupon._get_or_create_from_stripe_object(
-                discount, "coupon"
+                discount, "coupon", stripe_account=stripe_account
             )
             if coupon and coupon != self.coupon:
                 self.coupon = coupon
@@ -1214,7 +1250,9 @@ class Customer(StripeModel):
         if save:
             self.save()
 
-    def _attach_objects_hook(self, cls, data):
+    def _attach_objects_hook(self, cls, data, stripe_account=None):
+        super()._attach_objects_hook(cls, data, stripe_account=stripe_account)
+
         # When we save a customer to Stripe, we add a reference to its Django PK
         # in the `django_account` key. If we find that, we re-attach that PK.
         subscriber_key = djstripe_settings.SUBSCRIBER_CUSTOMER_KEY
@@ -1242,26 +1280,33 @@ class Customer(StripeModel):
     def _sync_invoices(self, **kwargs):
         from .billing import Invoice
 
+        stripe_account = self.stripe_account
+
         for stripe_invoice in Invoice.api_list(customer=self.id, **kwargs):
-            Invoice.sync_from_stripe_data(stripe_invoice)
+            Invoice.sync_from_stripe_data(stripe_invoice, stripe_account=stripe_account)
 
     def _sync_charges(self, **kwargs):
+        stripe_account = self.stripe_account
         for stripe_charge in Charge.api_list(customer=self.id, **kwargs):
-            Charge.sync_from_stripe_data(stripe_charge)
+            Charge.sync_from_stripe_data(stripe_charge, stripe_account=stripe_account)
 
     def _sync_cards(self, **kwargs):
         from .payment_methods import Card
 
+        stripe_account = self.stripe_account
+
         for stripe_card in Card.api_list(customer=self, **kwargs):
-            Card.sync_from_stripe_data(stripe_card)
+            Card.sync_from_stripe_data(stripe_card, stripe_account=stripe_account)
 
     def _sync_subscriptions(self, **kwargs):
         from .billing import Subscription
 
+        stripe_account = self.stripe_account
+
         for stripe_subscription in Subscription.api_list(
             customer=self.id, status="all", **kwargs
         ):
-            Subscription.sync_from_stripe_data(stripe_subscription)
+            Subscription.sync_from_stripe_data(stripe_subscription, stripe_account=stripe_account)
 
 
 class Dispute(StripeModel):
@@ -1340,7 +1385,9 @@ class Event(StripeModel):
     def str_parts(self):
         return ["type={type}".format(type=self.type)] + super().str_parts()
 
-    def _attach_objects_hook(self, cls, data):
+    def _attach_objects_hook(self, cls, data, stripe_account=None):
+        super()._attach_objects_hook(cls, data, stripe_account=stripe_account)
+
         if self.api_version is None:
             # as of api version 2017-02-14, the account.application.deauthorized
             # event sends None as api_version.
@@ -1358,16 +1405,28 @@ class Event(StripeModel):
             self.request_id = request_obj or ""
 
     @classmethod
-    def process(cls, data):
+    def process(cls, data, stripe_account=None):
         qs = cls.objects.filter(id=data["id"])
         if qs.exists():
             return qs.first()
+
+        # If this event is from a connect endpoint, it should have an account
+        # id specified that we need to pass along when doing CRUD operations
+        # on all stripe objects represented in the event. However, prefer the
+        # one that is passed in. In some cases, like manually retrieving events,
+        # there is no stripe_account field in the body.
+        if not stripe_account:
+            stripe_account = data.get("account")
 
         # Rollback any DB operations in the case of failure so
         # we will retry creating and processing the event the
         # next time the webhook fires.
         with transaction.atomic():
-            ret = cls._create_from_stripe_object(data)
+            ret = cls._create_from_stripe_object(data, stripe_account=stripe_account)
+
+            # cache account mapping to minimize additional queries
+            Account.remember_mapping_for(stripe_account, ret.account_id)
+
             ret.invoke_webhook_handlers()
             return ret
 
@@ -1410,7 +1469,12 @@ class Event(StripeModel):
             field = "customer"
 
         if data.get(field):
-            return Customer._get_or_create_from_stripe_object(data, field)[0]
+            stripe_account = self.stripe_account
+            return Customer._get_or_create_from_stripe_object(
+                data,
+                field,
+                stripe_account=stripe_account,
+            )[0]
 
 
 class FileUpload(StripeModel):

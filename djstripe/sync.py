@@ -7,7 +7,10 @@ from .models import Customer
 
 
 def sync_subscriber(subscriber):
-    """Sync a Customer with Stripe api data."""
+    """
+    Sync a Customer with Stripe api data.
+    Does not sync customers from connected accounts.
+    """
     customer, _created = Customer.get_or_create(subscriber=subscriber)
     try:
         customer.sync_from_stripe_data(customer.api_retrieve())

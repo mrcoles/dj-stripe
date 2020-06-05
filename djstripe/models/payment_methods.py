@@ -33,6 +33,8 @@ class DjstripePaymentMethod(models.Model):
         source_type = data["object"]
         model = cls._model_for_type(source_type)
 
+        # TODO(connect) - how does `stripe_account` factor in with this model?
+
         with transaction.atomic():
             model.sync_from_stripe_data(data)
             instance, _ = cls.objects.get_or_create(
@@ -103,7 +105,7 @@ class LegacySourceMixin:
         return customer.api_retrieve().sources.create(api_key=api_key, **clean_kwargs)
 
     @classmethod
-    def api_list(cls, api_key=djstripe_settings.STRIPE_SECRET_KEY, **kwargs):
+    def api_list(cls, api_key=djstripe_settings.STRIPE_SECRET_KEY, stripe_account=None, **kwargs):
         # OVERRIDING the parent version of this function
         # Cards & Bank Accounts must be manipulated through a customer or account.
         # TODO: When managed accounts are supported, this method needs to
@@ -113,7 +115,7 @@ class LegacySourceMixin:
         customer, clean_kwargs = cls._get_customer_from_kwargs(**kwargs)
 
         return (
-            customer.api_retrieve(api_key=api_key)
+            customer.api_retrieve(api_key=api_key, stripe_account=stripe_account)
             .sources.list(object=cls.stripe_class.OBJECT_NAME, **clean_kwargs)
             .auto_paging_iter()
         )
@@ -460,12 +462,15 @@ class Source(StripeModel):
 
     @classmethod
     def _manipulate_stripe_object_hook(cls, data):
+        data = super()._manipulate_stripe_object_hook(data)
         # The source_data dict is an alias of all the source types
         data["source_data"] = data[data["type"]]
         return data
 
-    def _attach_objects_hook(self, cls, data):
-        customer = cls._stripe_object_to_customer(target_cls=Customer, data=data)
+    def _attach_objects_hook(self, cls, data, stripe_account=None):
+        super()._attach_objects_hook(cls, data, stripe_account=stripe_account)
+
+        customer = cls._stripe_object_to_customer(target_cls=Customer, data=data, stripe_account=stripe_account)
         if customer:
             self.customer = customer
         else:
@@ -479,6 +484,8 @@ class Source(StripeModel):
         :rtype: bool
         """
 
+        stripe_account = self.stripe_account
+
         # First, wipe default source on all customers that use this.
         Customer.objects.filter(default_source=self.id).update(default_source=None)
 
@@ -486,13 +493,13 @@ class Source(StripeModel):
             # TODO - we could use the return value of sync_from_stripe_data
             #  or call its internals - self._sync/_attach_objects_hook etc here
             #  to update `self` at this point?
-            self.sync_from_stripe_data(self.api_retrieve().detach())
+            self.sync_from_stripe_data(self.api_retrieve().detach(), stripe_account=stripe_account)
             return True
         except (InvalidRequestError, NotImplementedError):
             # The source was already detached. Resyncing.
             # NotImplementedError is an artifact of stripe-python<2.0
             # https://github.com/stripe/stripe-python/issues/376
-            self.sync_from_stripe_data(self.api_retrieve())
+            self.sync_from_stripe_data(self.api_retrieve(), stripe_account=stripe_account)
             return False
 
 
@@ -536,8 +543,10 @@ class PaymentMethod(StripeModel):
 
     stripe_class = stripe.PaymentMethod
 
-    def _attach_objects_hook(self, cls, data):
-        customer = cls._stripe_object_to_customer(target_cls=Customer, data=data)
+    def _attach_objects_hook(self, cls, data, stripe_account=None):
+        super()._attach_objects_hook(cls, data, stripe_account=stripe_account)
+
+        customer = cls._stripe_object_to_customer(target_cls=Customer, data=data, stripe_account=stripe_account)
         if customer:
             self.customer = customer
         else:
@@ -545,7 +554,7 @@ class PaymentMethod(StripeModel):
 
     @classmethod
     def attach(
-        cls, payment_method, customer, api_key=djstripe_settings.STRIPE_SECRET_KEY
+        cls, payment_method, customer, api_key=djstripe_settings.STRIPE_SECRET_KEY, stripe_account=None
     ):
         """
         Attach a payment method to a customer
@@ -555,6 +564,8 @@ class PaymentMethod(StripeModel):
         :type customer: Union[str, Customer]
         :param api_key:
         :type api_key: str
+        :param stripe_account: the optional connected account
+        :type stripe_account: Optional[str]
         :return:
         :rtype: PaymentMethod
         """
@@ -573,9 +584,9 @@ class PaymentMethod(StripeModel):
             extra_kwargs = {"api_key": api_key}
 
         stripe_payment_method = stripe.PaymentMethod.attach(
-            payment_method, customer=customer, **extra_kwargs
+            payment_method, customer=customer, stripe_account=stripe_account, **extra_kwargs
         )
-        return cls.sync_from_stripe_data(stripe_payment_method)
+        return cls.sync_from_stripe_data(stripe_payment_method, stripe_account=stripe_account)
 
     def detach(self):
         """
@@ -594,19 +605,21 @@ class PaymentMethod(StripeModel):
         # see https://github.com/dj-stripe/dj-stripe/pull/967
         is_legacy_card = self.id.startswith("card_")
 
+        stripe_account = self.stripe_account
+
         try:
-            self.sync_from_stripe_data(self.api_retrieve().detach())
+            self.sync_from_stripe_data(self.api_retrieve().detach(), stripe_account=stripe_account)
 
             # resync customer to update .default_payment_method and
             # .invoice_settings.default_payment_method
             for customer in customers:
-                Customer.sync_from_stripe_data(customer.api_retrieve())
+                Customer.sync_from_stripe_data(customer.api_retrieve(), stripe_account=stripe_account)
 
         except (InvalidRequestError,):
             # The source was already detached. Resyncing.
 
             if self.pk and not is_legacy_card:
-                self.sync_from_stripe_data(self.api_retrieve())
+                self.sync_from_stripe_data(self.api_retrieve(), stripe_account=stripe_account)
             changed = False
 
         if self.pk:
