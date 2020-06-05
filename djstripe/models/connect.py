@@ -1,5 +1,6 @@
 import stripe
 from django.db import models
+from functools import lru_cache
 
 from .. import enums
 from .. import settings as djstripe_settings
@@ -13,6 +14,11 @@ from ..fields import (
 )
 from ..managers import TransferManager
 from .base import StripeModel
+
+# An in-memory mapping of a single stripe_account -> djstripe_id relationship
+# used to keep the `stripe_account_to_djstripe_id` and `djstripe_id_to_stripe_account`
+# methods in sync.
+_TMP_ACCOUNT_MAPPING_CONTAINER = [(None, None)] # Union[Tuple[str, int], Tuple[None, None]]
 
 
 class Account(StripeModel):
@@ -140,6 +146,105 @@ class Account(StripeModel):
         account_data = cls.stripe_class.retrieve(api_key=access_token)
 
         return cls._get_or_create_from_stripe_object(account_data)[0]
+
+    @classmethod
+    def get_connected_account(cls, stripe_account=None):
+        """
+        Get the account object for the given stripe_account string.
+        :param stripe_account: The optional stripe_account ID
+        :type stripe_account: Optional[str]
+        :return: the matching connected account or None if none is specified
+        :rtype: Account
+        """
+        if not stripe_account:
+            return None
+
+        try:
+            return cls.objects.get(id=stripe_account)
+        except cls.DoesNotExist:
+            account_data = cls.stripe_class.retrieve(id=stripe_account)
+            return cls._get_or_create_from_stripe_object(account_data)[0]
+
+    @classmethod
+    @lru_cache(maxsize=128)
+    def stripe_account_to_djstripe_id(cls, stripe_account=None):
+        """
+        Helper method for converting a stripe_account string into
+        a djstripe_id int that is backed by an LRU cache, to avoid
+        unnecessary I/O.
+        :param stripe_account: the connected account (if any)
+        :type stripe_account: Optional[str]
+        :return: the djstripe_id for the Account model foreign key
+        :rtype: Optional[int]
+        """
+        if not stripe_account:
+            return None
+
+        # check if the last processed value matches
+        t_stripe_account, t_djstripe_id = _TMP_ACCOUNT_MAPPING_CONTAINER[0]
+        if stripe_account == t_stripe_account:
+            return t_djstripe_id
+
+        account = cls.get_connected_account(stripe_account)
+        djstripe_id = account.djstripe_id
+
+        # warm the reverse cache
+        _TMP_ACCOUNT_MAPPING_CONTAINER[0] = (stripe_account, djstripe_id)
+        cls.djstripe_id_to_stripe_account(stripe_account)
+
+        return djstripe_id
+
+    @classmethod
+    @lru_cache(maxsize=128)
+    def djstripe_id_to_stripe_account(cls, djstripe_id=None):
+        """
+        Helper method for converting a djstripe_id int into
+        a stripe_account str that is backed by an LRU cache, to avoid
+        unnecessary I/O.
+        :param djstripe_id: the djstripe_id, e.g., instance.account_id
+        :type djstripe_id: Optional[int]
+        :return: the stripe_account for the connected account
+        :rtype: Optional[sr]
+        """
+        if not djstripe_id:
+            return None
+
+        # check if the last processed value matches
+        t_stripe_account, t_djstripe_id = _TMP_ACCOUNT_MAPPING_CONTAINER[0]
+        if djstripe_id == t_djstripe_id:
+            return t_stripe_account
+
+        account = cls.objects.get(djstripe_id=djstripe_id)
+        stripe_account = account.id
+
+        # warm the reverse cache
+        _TMP_ACCOUNT_MAPPING_CONTAINER[0] = (stripe_account, djstripe_id)
+        cls.stripe_account_to_djstripe_id(stripe_account)
+
+        return stripe_account
+
+    def remember_mapping(self):
+        """
+        Use this method to add the mapping between the stripe_account and
+        djstripe_id to the cache, in order to minimize additional queries
+        """
+        Account.remember_mapping_params(self.id, self.djstripe_id)
+
+    @classmethod
+    def remember_mapping_for(cls, stripe_account, djstripe_id):
+        """
+        Use this method to add the mapping between the stripe_account and
+        djstripe_id to the cache, in order to minimize additional queries
+
+        :param stripe_account: the connected stripe account
+        :type stripe_account: Optional[str]
+        :param djstripe_id: the djstripe foreign key id
+        :type djstripe_id: Optional[int]
+        """
+        if stripe_account and djstripe_id:
+            _TMP_ACCOUNT_MAPPING_CONTAINER[0] = (stripe_account, djstripe_id)
+            Account.stripe_account_to_djstripe_id(stripe_account)
+            Account.djstripe_id_to_stripe_account(djstripe_id)
 
     @classmethod
     def get_default_account(cls):
