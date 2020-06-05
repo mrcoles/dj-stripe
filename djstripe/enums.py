@@ -295,6 +295,11 @@ class DisputeStatus(Enum):
     lost = _("Lost")
 
 
+class EndpointType(Enum):
+    account = _("Account")
+    connect = _("Connect")
+
+
 class FileUploadPurpose(Enum):
     dispute_evidence = _("Dispute evidence")
     identity_document = _("Identity document")

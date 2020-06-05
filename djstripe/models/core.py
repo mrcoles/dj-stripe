@@ -110,14 +110,18 @@ class Charge(StripeModel):
         help_text="The customer associated with this charge.",
     )
     # XXX: destination
-    # TODO - has this been renamed to on_behalf_of?
+    # TODO(connect) - is it OK to co-opt this given it was already here?
+    # it looks like old code sent the legacy destination[account] value here
+    # see self._attach_objects_hook(...) -> destination_account
     account = models.ForeignKey(
         "Account",
         on_delete=models.CASCADE,
         null=True,
+        # TODO(connect) - drop this related_name to match rest of accounts?
         related_name="charges",
-        help_text="The account the charge was made on behalf of. "
-        "Null here indicates that this value was never set.",
+        help_text="The account the charge was made on. "
+        "Null here indicates that this value was never set. "
+        "(Previously this field was described as on_behalf_of)",
     )
     dispute = models.ForeignKey(
         "Dispute",
@@ -151,7 +155,14 @@ class Charge(StripeModel):
         related_name="charges",
         help_text="The invoice this charge is for if one exists.",
     )
-    # TODO: on_behalf_of (see account above), order
+    on_behalf_of = models.ForeignKey(
+        "Account",
+        on_delete=models.CASCADE,
+        null=True,
+        related_name="on_behalf_of_charges",
+        help_text="The account the charge was made on behalf of. "
+        "Null here indicates that this value was never set.",
+    )
     outcome = JSONField(
         help_text="Details about whether or not the payment was accepted, and why.",
         null=True,
@@ -296,10 +307,8 @@ class Charge(StripeModel):
         destination_account = cls._stripe_object_destination_to_account(
             target_cls=Account, data=data
         )
-        if destination_account:
-            self.account = destination_account
-        else:
-            self.account = Account.get_default_account()
+        if destination_account and not self.on_behalf_of:
+            self.on_behalf_of = destination_account
 
         # Source doesn't always appear to be present, so handle the case
         # where it is missing.
@@ -512,7 +521,7 @@ class Customer(StripeModel):
     date_purged = models.DateTimeField(null=True, editable=False)
 
     class Meta:
-        unique_together = ("subscriber", "livemode")
+        unique_together = ("subscriber", "livemode", "account")
 
     def __str__(self):
         if not self.subscriber:
@@ -1308,6 +1317,14 @@ class Event(StripeModel):
         help_text="data received at webhook. data should be considered to be garbage "
         "until validity check is run and valid flag is set"
     )
+    pending_webhooks = models.PositiveIntegerField(
+        help_text=(
+            "Number of webhooks that have yet to be successfully delivered "
+            "(i.e., to return a 20x response) to the URLs you’ve specified."
+        ),
+        default=0,
+        blank=True,
+    )
     request_id = models.CharField(
         max_length=50,
         help_text="Information about the request that triggered this event, "
@@ -1520,6 +1537,7 @@ class PaymentIntent(StripeModel):
         "Account",
         on_delete=models.CASCADE,
         null=True,
+        related_name="on_behalf_of_paymentintents",
         blank=True,
         help_text="The account (if any) for which the funds of the "
         "PaymentIntent are intended.",
@@ -1704,6 +1722,7 @@ class SetupIntent(StripeModel):
     on_behalf_of = models.ForeignKey(
         "Account",
         on_delete=models.SET_NULL,
+        related_name="on_behalf_of_setupintents",
         null=True,
         blank=True,
         help_text="The account (if any) for which the setup is intended.",

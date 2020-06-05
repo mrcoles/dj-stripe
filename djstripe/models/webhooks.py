@@ -8,7 +8,8 @@ from django.utils.functional import cached_property
 
 from .. import settings as djstripe_settings
 from ..context_managers import stripe_temporary_api_version
-from ..fields import JSONField
+from ..enums import EndpointType
+from ..fields import JSONField, StripeEnumField
 from ..signals import webhook_processing_error
 from ..utils import fix_django_headers
 from .base import logger
@@ -37,6 +38,11 @@ class WebhookEventTrigger(models.Model):
     )
     headers = JSONField()
     body = models.TextField(blank=True)
+    endpoint_type = StripeEnumField(
+        enum=EndpointType,
+        help_text="The endpoint type that this event was triggered from.",
+        default=EndpointType.account,
+    )
     valid = models.BooleanField(
         default=False,
         help_text="Whether or not the webhook event has passed validation",

@@ -109,6 +109,25 @@ class Account(StripeModel):
     )
 
     @property
+    def account(self):
+        """
+        For compatibility expose the same `account` field as other models.
+        # TODO(connect) - does this run into an issue where the platform's
+        # account should return None?
+        :rtype: self
+        """
+        return self
+
+    @property
+    def account_id(self):
+        """
+        For compatibility expose the same `account_id` field as other models.
+        Note: this is the djstripe_id foreign key, not stripe id
+        :rtype: Optional[int]
+        """
+        return self.djstripe_id
+
+    @property
     def business_url(self):
         """
         The business’s publicly available website.

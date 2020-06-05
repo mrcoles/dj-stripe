@@ -52,6 +52,13 @@ class StripeModel(models.Model):
     description = models.TextField(
         null=True, blank=True, help_text="A description of this object."
     )
+    account = models.ForeignKey(
+        "Account",
+        on_delete=models.CASCADE,
+        null=True,
+        help_text="The connected account (if any) in which the object was made. "
+        "Null here indicates that the object belongs to the platform's account.",
+    )
 
     djstripe_created = models.DateTimeField(auto_now_add=True, editable=False)
     djstripe_updated = models.DateTimeField(auto_now=True, editable=False)
