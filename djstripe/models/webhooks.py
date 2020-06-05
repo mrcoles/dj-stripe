@@ -71,7 +71,7 @@ class WebhookEventTrigger(models.Model):
     updated = models.DateTimeField(auto_now=True)
 
     @classmethod
-    def from_request(cls, request):
+    def from_request(cls, request, endpoint_type):
         """
         Create, validate and process a WebhookEventTrigger given a Django
         request object.
@@ -96,7 +96,7 @@ class WebhookEventTrigger(models.Model):
                 "This is likely an issue with your wsgi/server setup."
             )
             ip = "0.0.0.0"
-        obj = cls.objects.create(headers=headers, body=body, remote_ip=ip)
+        obj = cls.objects.create(headers=headers, body=body, remote_ip=ip, endpoint_type=endpoint_type)
 
         try:
             obj.valid = obj.validate()
@@ -155,18 +155,25 @@ class WebhookEventTrigger(models.Model):
             logger.info("Test webhook received: {}".format(local_data))
             return False
 
+        if self.endpoint_type == EndpointType.account:
+            webhook_secret = djstripe_settings.WEBHOOK_SECRET
+        elif self.endpoint_type == EndpointType.connect:
+            webhook_secret = djstripe_settings.CONNECT_WEBHOOK_SECRET
+        else:
+            raise ValueError(f"Invalid endpoint_type {self.endpoint_type} encountered")
+
         if djstripe_settings.WEBHOOK_VALIDATION is None:
             # validation disabled
             return True
         elif (
             djstripe_settings.WEBHOOK_VALIDATION == "verify_signature"
-            and djstripe_settings.WEBHOOK_SECRET
+            and webhook_secret
         ):
             try:
                 stripe.WebhookSignature.verify_header(
                     self.body,
                     self.headers.get("stripe-signature"),
-                    djstripe_settings.WEBHOOK_SECRET,
+                    webhook_secret,
                     djstripe_settings.WEBHOOK_TOLERANCE,
                 )
             except stripe.error.SignatureVerificationError:
