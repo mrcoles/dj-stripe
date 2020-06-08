@@ -166,6 +166,33 @@ class Account(StripeModel):
             return cls._get_or_create_from_stripe_object(account_data)[0]
 
     @classmethod
+    def _get_or_create_from_stripe_object(
+        cls,
+        data,
+        field_name="id",
+        refetch=True,
+        current_ids=None,
+        pending_relations=None,
+        save=True,
+        stripe_account=None,
+    ):
+        """
+        Same as StripeModel._get_or_create_from_stripe_object, but performs
+        an additional `instance.remember()` call.
+        """
+        instance, created = super()._get_or_create_from_stripe_object(
+            data,
+            field_name=field_name,
+            refetch=refetch,
+            current_ids=current_ids,
+            pending_relations=pending_relations,
+            save=save,
+            stripe_account=stripe_account,
+        )
+        instance.remember_mapping()
+        return instance, created
+
+    @classmethod
     @lru_cache(maxsize=128)
     def stripe_account_to_djstripe_id(cls, stripe_account=None):
         """
@@ -228,7 +255,7 @@ class Account(StripeModel):
         Use this method to add the mapping between the stripe_account and
         djstripe_id to the cache, in order to minimize additional queries
         """
-        Account.remember_mapping_params(self.id, self.djstripe_id)
+        Account.remember_mapping_for(self.id, self.djstripe_id)
 
     @classmethod
     def remember_mapping_for(cls, stripe_account, djstripe_id):
