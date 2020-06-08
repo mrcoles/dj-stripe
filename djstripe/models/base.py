@@ -9,7 +9,7 @@ from django.utils.encoding import smart_str
 
 from .. import settings as djstripe_settings
 from ..fields import JSONField, StripeDateTimeField, StripeIdField
-from ..managers import StripeModelManager
+from ..managers import DefaultManager, StripeModelManager
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,7 @@ class StripeModel(models.Model):
     expand_fields = []
     stripe_dashboard_item_name = ""
 
-    objects = models.Manager()
+    objects = DefaultManager()
     stripe_objects = StripeModelManager()
 
     djstripe_id = models.BigAutoField(

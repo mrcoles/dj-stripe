@@ -2,17 +2,59 @@
 dj-stripe model managers
 """
 import decimal
+from typing import Optional
 
 from django.db import models
 
+class StripeAccountQuerySet(models.QuerySet):
+    def with_stripe_account(self, stripe_account: Optional[str] = None):
+        """
+        :param stripe_account: the optional connected account
+        :type stripe_account: Optional[str]
+        :return: this fitered to the specified account (or default account if none)
+        :rtype: self
+        """
+        if stripe_account:
+            return self.filter(account__id=stripe_account)
+        else:
+            return self.filter(account=None)
 
-class StripeModelManager(models.Manager):
+    def with_account(self, account=None):
+        """
+        :param account: the optional connected account object
+        :type account: Optional[Union[djstripe.models.Account, int]]
+        :return: this fitered to the specified account (or default account if none)
+        :rtype: self
+        """
+        if account:
+            return self.filter(account=account)
+        else:
+            return self.filter(account=None)
+
+
+class StripeAccountQueryMixin:
+    def get_queryset(self):
+        return StripeAccountQuerySet(
+            model=self.model,
+            using=self._db,
+            hints=self._hints
+        )
+
+
+class DefaultManager(StripeAccountQueryMixin, models.Manager):
+    """Default manager used in StripeModel."""
+    # TODO(connect) - figure out why there’s a separate `objects` and `stripe_objects`
+
+    pass
+
+
+class StripeModelManager(StripeAccountQueryMixin, models.Manager):
     """Manager used in StripeModel."""
 
     pass
 
 
-class SubscriptionManager(models.Manager):
+class SubscriptionManager(StripeAccountQueryMixin, models.Manager):
     """Manager used in models.Subscription."""
 
     def started_during(self, year, month):
@@ -66,7 +108,7 @@ class SubscriptionManager(models.Manager):
         return decimal.Decimal(str(canceled)) / decimal.Decimal(str(active))
 
 
-class TransferManager(models.Manager):
+class TransferManager(StripeAccountQueryMixin, models.Manager):
     """Manager used by models.Transfer."""
 
     def during(self, year, month):
@@ -80,7 +122,7 @@ class TransferManager(models.Manager):
         return self.during(year, month).aggregate(total_amount=models.Sum("amount"))
 
 
-class ChargeManager(models.Manager):
+class ChargeManager(StripeAccountQueryMixin, models.Manager):
     """Manager used by models.Charge."""
 
     def during(self, year, month):
