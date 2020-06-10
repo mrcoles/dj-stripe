@@ -217,7 +217,7 @@ class Account(StripeModel):
 
         # warm the reverse cache
         _TMP_ACCOUNT_MAPPING_CONTAINER[0] = (stripe_account, djstripe_id)
-        cls.djstripe_id_to_stripe_account(stripe_account)
+        cls.djstripe_id_to_stripe_account(djstripe_id)
 
         return djstripe_id
 
