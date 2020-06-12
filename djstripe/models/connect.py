@@ -51,6 +51,13 @@ class Account(StripeModel):
     business_type = StripeEnumField(
         enum=enums.BusinessType, default="", blank=True, help_text="The business type."
     )
+    capabilities = JSONField(
+        null=True,
+        blank=True,
+        help_text=(
+            "A hash containing the set of capabilities that was requested for this account and their associated states. Keys are names of capabilities. Values may be active, inactive, or pending."
+        ),
+    )
     charges_enabled = models.BooleanField(
         help_text="Whether the account can create live charges"
     )
