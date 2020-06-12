@@ -153,6 +153,7 @@ def payment_method_handler(event):
 
 
 @webhooks.handler(
+    "account",
     "charge",
     "coupon",
     "invoice",
@@ -167,10 +168,12 @@ def payment_method_handler(event):
 )
 def other_object_webhook_handler(event):
     """
-    Handle updates to charge, coupon, invoice, invoiceitem, payment_intent,
-    plan, product, setup_intent, source, tax_rate and transfer objects.
+    Handle updates to account, charge, coupon, invoice, invoiceitem,
+    payment_intent, plan, product, setup_intent, source, tax_rate and transfer
+    objects.
 
     Docs for:
+    - account: https://stripe.com/docs/api/accounts
     - charge: https://stripe.com/docs/api/charges
     - coupon: https://stripe.com/docs/api/coupons
     - invoice: https://stripe.com/docs/api/invoices
@@ -190,6 +193,7 @@ def other_object_webhook_handler(event):
         target_cls = models.Dispute
     else:
         target_cls = {
+            "account": models.Account,
             "charge": models.Charge,
             "coupon": models.Coupon,
             "invoice": models.Invoice,
