@@ -1,6 +1,6 @@
+import datetime
 import stripe
 from django.db import models
-from functools import lru_cache
 
 from .. import enums
 from .. import settings as djstripe_settings
@@ -15,10 +15,19 @@ from ..fields import (
 from ..managers import TransferManager
 from .base import StripeModel
 
+
 # An in-memory mapping of a single stripe_account -> djstripe_id relationship
-# used to keep the `stripe_account_to_djstripe_id` and `djstripe_id_to_stripe_account`
-# methods in sync.
-_TMP_ACCOUNT_MAPPING_CONTAINER = [(None, None)] # Union[Tuple[str, int], Tuple[None, None]]
+# used to keep limit stripe_account -> id lookups
+# TODO(connect) - this breaks if mappings are remembered for rolled-back updates
+_TMP_ACCOUNT_MAPPING_CONTAINER = [(None, None, None)] # Union[Tuple[str, int, datetime.datetime], Tuple[None, None, None]]
+
+
+def _is_datetime_ok(dt: datetime.datetime):
+    if dt:
+        now = datetime.datetime.now()
+        delta = now - dt
+        return delta.total_seconds() < 30
+    return False
 
 
 class Account(StripeModel):
@@ -200,12 +209,12 @@ class Account(StripeModel):
         return instance, created
 
     @classmethod
-    @lru_cache(maxsize=128)
     def stripe_account_to_djstripe_id(cls, stripe_account=None):
         """
         Helper method for converting a stripe_account string into
-        a djstripe_id int that is backed by an LRU cache, to avoid
-        unnecessary I/O.
+        a djstripe_id that caches the last response for 30 seconds,
+        to avoid unnecessary I/O.
+
         :param stripe_account: the connected account (if any)
         :type stripe_account: Optional[str]
         :return: the djstripe_id for the Account model foreign key
@@ -215,45 +224,39 @@ class Account(StripeModel):
             return None
 
         # check if the last processed value matches
-        t_stripe_account, t_djstripe_id = _TMP_ACCOUNT_MAPPING_CONTAINER[0]
-        if stripe_account == t_stripe_account:
+        t_stripe_account, t_djstripe_id, t_datetime = _TMP_ACCOUNT_MAPPING_CONTAINER[0]
+        if stripe_account == t_stripe_account and _is_datetime_ok(t_datetime):
             return t_djstripe_id
 
         account = cls.get_connected_account(stripe_account)
         djstripe_id = account.djstripe_id
-
-        # warm the reverse cache
-        _TMP_ACCOUNT_MAPPING_CONTAINER[0] = (stripe_account, djstripe_id)
-        cls.djstripe_id_to_stripe_account(djstripe_id)
+        cls.remember_mapping_for(stripe_account, djstripe_id)
 
         return djstripe_id
 
     @classmethod
-    @lru_cache(maxsize=128)
     def djstripe_id_to_stripe_account(cls, djstripe_id=None):
         """
-        Helper method for converting a djstripe_id int into
-        a stripe_account str that is backed by an LRU cache, to avoid
-        unnecessary I/O.
+        Helper method for converting a djstripe_id intn into
+        a stripe_account str that caches the last response for 30 seconds,
+        to avoid unnecessary I/O.
+
         :param djstripe_id: the djstripe_id, e.g., instance.account_id
         :type djstripe_id: Optional[int]
         :return: the stripe_account for the connected account
-        :rtype: Optional[sr]
+        :rtype: Optional[str]
         """
         if not djstripe_id:
             return None
 
         # check if the last processed value matches
-        t_stripe_account, t_djstripe_id = _TMP_ACCOUNT_MAPPING_CONTAINER[0]
-        if djstripe_id == t_djstripe_id:
+        t_stripe_account, t_djstripe_id, t_datetime = _TMP_ACCOUNT_MAPPING_CONTAINER[0]
+        if djstripe_id == t_djstripe_id and _is_datetime_ok(t_datetime):
             return t_stripe_account
 
         account = cls.objects.get(djstripe_id=djstripe_id)
         stripe_account = account.id
-
-        # warm the reverse cache
-        _TMP_ACCOUNT_MAPPING_CONTAINER[0] = (stripe_account, djstripe_id)
-        cls.stripe_account_to_djstripe_id(stripe_account)
+        cls.remember_mapping_for(stripe_account, djstripe_id)
 
         return stripe_account
 
@@ -276,9 +279,7 @@ class Account(StripeModel):
         :type djstripe_id: Optional[int]
         """
         if stripe_account and djstripe_id:
-            _TMP_ACCOUNT_MAPPING_CONTAINER[0] = (stripe_account, djstripe_id)
-            Account.stripe_account_to_djstripe_id(stripe_account)
-            Account.djstripe_id_to_stripe_account(djstripe_id)
+            _TMP_ACCOUNT_MAPPING_CONTAINER[0] = (stripe_account, djstripe_id, datetime.datetime.now())
 
     @classmethod
     def get_default_account(cls):
