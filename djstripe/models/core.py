@@ -575,6 +575,8 @@ class Customer(StripeModel):
         if stripe_account:
             # Double underscore to match 'acct_'
             kwargs['account__id'] = stripe_account
+        else:
+            kwargs['account'] = None
 
         try:
             return Customer.objects.get(subscriber=subscriber, livemode=livemode, **kwargs), False
