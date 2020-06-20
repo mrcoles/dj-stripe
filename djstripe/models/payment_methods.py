@@ -93,12 +93,19 @@ class LegacySourceMixin:
         return customer, kwargs
 
     @classmethod
-    def _api_create(cls, api_key=djstripe_settings.STRIPE_SECRET_KEY, **kwargs):
+    def _api_create(cls, api_key=djstripe_settings.STRIPE_SECRET_KEY, stripe_account=None, **kwargs):
         # OVERRIDING the parent version of this function
         # Cards & Bank Accounts must be manipulated through a customer or account.
-        # TODO: When managed accounts are supported, this method needs to
-        #     check if either a customer or account is supplied to determine
-        #     the correct object to use.
+
+        # For connected accounts, External Accounts are transfer destinations.
+        # Bank accounts and debit cards have a special creation syntax:
+        # * https://stripe.com/docs/api/external_account_bank_accounts/create
+        # * https://stripe.com/docs/api/external_account_cards/create
+        if stripe_account:
+            return stripe.Account.create_external_account(
+                stripe_account,
+                external_account=kwargs,
+            )
 
         customer, clean_kwargs = cls._get_customer_from_kwargs(**kwargs)
 
@@ -108,9 +115,29 @@ class LegacySourceMixin:
     def api_list(cls, api_key=djstripe_settings.STRIPE_SECRET_KEY, stripe_account=None, **kwargs):
         # OVERRIDING the parent version of this function
         # Cards & Bank Accounts must be manipulated through a customer or account.
-        # TODO: When managed accounts are supported, this method needs to
-        #     check if either a customer or account is supplied to determine
-        #     the correct object to use.
+
+        # For connected accounts, External Accounts are transfer destinations.
+        # Bank accounts and debit cards have a special list syntax, and in this case,
+        # different calls for each:
+        # * https://stripe.com/docs/api/external_account_bank_accounts/list
+        # * https://stripe.com/docs/api/external_account_cards/list
+        if stripe_account:
+            if self.stripe_class is stripe.BankAccount:
+                query = stripe.Account.list_external_accounts(
+                    stripe_account,
+                    object="bank_account",
+                    **kwargs,
+                )
+            elif self.stripe_class is stripe.Card:
+                query = stripe.AccountCard.list(
+                    stripe_account,
+                    object="card",
+                    **kwargs,
+                )
+            else:
+                raise ValueError("Unknown stripe_class: {}".format(self.stripe_class.__name__))
+
+            return query.auto_paging_iter()
 
         customer, clean_kwargs = cls._get_customer_from_kwargs(**kwargs)
 
@@ -121,12 +148,46 @@ class LegacySourceMixin:
         )
 
     def get_stripe_dashboard_url(self):
-        return self.customer.get_stripe_dashboard_url()
+        return self.customer.get_stripe_dashboard_url() if self.customer else ""
 
     def remove(self):
         """
         Removes a legacy source from this customer's account.
         """
+
+        # TODO(connect) - validate if checking self.account is the right move here...
+        # Is this an issue with "account" being explicitly a field of BankAccount and
+        # also re-using in our core StripeModel class, since we cannot tell if the
+        # field was set because it's part of BankAccount or via a stripe connect call?
+        #
+        # Also, it seems deleting connected bank accounts might actually trigger:
+        #
+        # > PermissionError: This application does not have the required permissions
+        # > for this endpoint on account
+        #
+        stripe_account = self.stripe_account
+
+        # For connected accounts, External Accounts are transfer destinations.
+        # Bank accounts and debit cards have a special creation syntax:
+        # * https://stripe.com/docs/api/external_account_bank_accounts/delete
+        # * https://stripe.com/docs/api/external_account_cards/delete
+        if self.stripe_account:
+            try:
+                stripe.Account.delete_external_account(
+                    stripe_account,
+                    self.id,
+                )
+            except InvalidRequestError as exc:
+                if "No such " in str(exc):
+                    # The exception was thrown because the stripe bank account or card
+                    # was already deleted on the stripe side, ignore the exception
+                    pass
+                else:
+                    # The exception was raised for another reason, re-raise it
+                    raise
+
+            self.delete()
+            return
 
         # First, wipe default source on all customers that use this card.
         Customer.objects.filter(default_source=self.id).update(default_source=None)
@@ -145,11 +206,24 @@ class LegacySourceMixin:
         self.delete()
 
     def api_retrieve(self, api_key=None, stripe_account=None):
+        """
+        :param api_key: legacy api_key parameter
+        :type api_key: Optional[str]
+        :param stripe_account: the connected account (if any) to retrieve from
+        :type stripe_account: Optional[str]
+        :return: The stripe object API response for this object
+        :rtype: StripeObject
+        """
         # OVERRIDING the parent version of this function
         # Cards & Banks Accounts must be manipulated through a customer or account.
-        # TODO: When managed accounts are supported, this method needs to check if
-        # either a customer or account is supplied to determine the
-        # correct object to use.
+
+        # For connected accounts, External Accounts are transfer destinations.
+        # Bank accounts and debit cards have a special lookup syntax:
+        # * https://stripe.com/docs/api/external_account_bank_accounts/retrieve
+        # * https://stripe.com/docs/api/external_account_cards/retrieve
+        if stripe_account:
+            return stripe.Account.retrieve_external_account(stripe_account, self.id)
+
         api_key = api_key or self.default_api_key
         customer = self.customer.api_retrieve(
             api_key=api_key, stripe_account=stripe_account
