@@ -40,6 +40,12 @@ class StripeAccountQueryMixin:
             hints=self._hints
         )
 
+    def with_stripe_account(self, stripe_account: Optional[str] = None):
+        return self.get_queryset().with_stripe_account(stripe_account)
+
+    def with_account(self, account=None):
+        return self.get_queryset().with_account(account)
+
 
 class DefaultManager(StripeAccountQueryMixin, models.Manager):
     """Default manager used in StripeModel."""
