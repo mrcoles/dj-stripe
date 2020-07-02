@@ -240,6 +240,42 @@ class LegacySourceMixin:
         # so we don't have to pass `stripe_account`.
         return customer.sources.retrieve(self.id, expand=self.expand_fields)
 
+    @classmethod
+    def _get_or_create_from_stripe_object(
+        cls,
+        data,
+        field_name="id",
+        refetch=True,
+        current_ids=None,
+        pending_relations=None,
+        save=True,
+        stripe_account=None,
+    ):
+        is_destination = field_name == 'destination'
+        object_is_payout = data.get('object') == 'payout'
+        field = data.get(field_name)
+        id_ = cls._id_from_data(field)
+
+        # TODO(connect) - if this is a payout.destination, we cannot
+        # perform a regular api_retrieve on it, since it needs
+        # the context of an account or customer. Instead, expand
+        # the payout and get the full destination's context.
+        if is_destination and object_is_payout and id_ and refetch:
+            payout_id = data.get('id')
+            payout = stripe.Payout.retrieve(payout_id, stripe_account=stripe_account, expand=['destination'])
+            data = payout
+            refetch = False
+
+        return super()._get_or_create_from_stripe_object(
+            data,
+            field_name,
+            refetch,
+            current_ids,
+            pending_relations,
+            save,
+            stripe_account,
+        )
+
 
 class BankAccount(LegacySourceMixin, StripeModel):
     stripe_class = stripe.BankAccount
