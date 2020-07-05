@@ -179,7 +179,8 @@ class Account(StripeModel):
             return cls.objects.get(id=stripe_account)
         except cls.DoesNotExist:
             account_data = cls.stripe_class.retrieve(id=stripe_account)
-            return cls._get_or_create_from_stripe_object(account_data)[0]
+            # TODO(connect)(q) - do connect accounts have separate accounts?
+            return cls.sync_from_stripe_data(account_data)
 
     @classmethod
     def _get_or_create_from_stripe_object(
