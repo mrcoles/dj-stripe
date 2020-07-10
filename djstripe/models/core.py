@@ -1150,7 +1150,7 @@ class Customer(StripeModel):
         from .billing import Invoice
 
         try:
-            invoice = Invoice._api_create(customer=self.id)
+            invoice = Invoice._api_create(customer=self.id, stripe_account=self.stripe_account)
             invoice.pay()
             return True
         except InvalidRequestError:  # TODO: Check this for a more
