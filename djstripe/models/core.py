@@ -1911,6 +1911,37 @@ class Payout(StripeModel):
     )
     type = StripeEnumField(enum=enums.PayoutType)
 
+    @classmethod
+    def _stripe_object_field_to_foreign_key(
+        cls,
+        field,
+        manipulated_data,
+        current_ids=None,
+        pending_relations=None,
+        stripe_account=None,
+    ):
+        field_name = field.name
+
+        if field_name == 'destination':
+            raw_field_data = manipulated_data.get(field_name)
+            id_ = cls._id_from_data(raw_field_data)
+
+            if id_ and id_.startswith('card_'):
+                # TODO(connect) - HACK - cannot sync Payouts for cards,
+                # because the foreign key for destination is set up
+                # for BankAccount, so let's skip it for now...
+                # Perhaps it could be two different foreign keys for each
+                # type and then a helper @property to access as one?
+                return None, True
+
+        return super()._stripe_object_field_to_foreign_key(
+            field,
+            manipulated_data,
+            current_ids=current_ids,
+            pending_relations=pending_relations,
+            stripe_account=stripe_account,
+        )
+
 
 class Product(StripeModel):
     """
