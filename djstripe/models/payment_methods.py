@@ -104,6 +104,7 @@ class LegacySourceMixin:
         if stripe_account:
             return stripe.Account.create_external_account(
                 stripe_account,
+                api_key=api_key,
                 external_account=kwargs,
             )
 
@@ -125,12 +126,14 @@ class LegacySourceMixin:
             if self.stripe_class is stripe.BankAccount:
                 query = stripe.Account.list_external_accounts(
                     stripe_account,
+                    api_key=api_key,
                     object="bank_account",
                     **kwargs,
                 )
             elif self.stripe_class is stripe.Card:
                 query = stripe.AccountCard.list(
                     stripe_account,
+                    api_key=api_key,
                     object="card",
                     **kwargs,
                 )
@@ -217,14 +220,19 @@ class LegacySourceMixin:
         # OVERRIDING the parent version of this function
         # Cards & Banks Accounts must be manipulated through a customer or account.
 
+        api_key = api_key or self.default_api_key
+
         # For connected accounts, External Accounts are transfer destinations.
         # Bank accounts and debit cards have a special lookup syntax:
         # * https://stripe.com/docs/api/external_account_bank_accounts/retrieve
         # * https://stripe.com/docs/api/external_account_cards/retrieve
         if stripe_account:
-            return stripe.Account.retrieve_external_account(stripe_account, self.id)
+            return stripe.Account.retrieve_external_account(
+                stripe_account,
+                self.id,
+                api_key=api_key,
+            )
 
-        api_key = api_key or self.default_api_key
         customer = self.customer.api_retrieve(
             api_key=api_key, stripe_account=stripe_account
         )
