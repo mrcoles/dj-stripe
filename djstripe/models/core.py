@@ -664,6 +664,7 @@ class Customer(StripeModel):
         trial_end=None,
         trial_from_plan=None,
         trial_period_days=None,
+        promotion_code=None,
     ):
         """
         Subscribes this customer to a plan.
@@ -717,6 +718,10 @@ class Customer(StripeModel):
             This will always overwrite any trials that might apply
             via a subscribed plan.
         :type trial_period_days: integer
+        :param promotion_code: The promotion code to apply to this subscription.
+            A promotion code applied to a subscription
+            will only affect invoices created for that particular subscription.
+        :type promotion_code: string
 
         .. Notes:
         .. ``charge_immediately`` is only available on ``Customer.subscribe()``
@@ -736,6 +741,7 @@ class Customer(StripeModel):
             customer=self.id,
             application_fee_percent=application_fee_percent,
             coupon=coupon,
+            promotion_code=promotion_code,
             quantity=quantity,
             metadata=metadata,
             billing_cycle_anchor=billing_cycle_anchor,
