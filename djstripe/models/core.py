@@ -665,6 +665,7 @@ class Customer(StripeModel):
         trial_from_plan=None,
         trial_period_days=None,
         promotion_code=None,
+        payment_behavior=None,
     ):
         """
         Subscribes this customer to a plan.
@@ -722,6 +723,8 @@ class Customer(StripeModel):
             A promotion code applied to a subscription
             will only affect invoices created for that particular subscription.
         :type promotion_code: string
+        :param payment_behavior: Control the payment behavior for this subscription.
+        :type payment_behavior: str # 'allow_incomplete' | 'error_if_incomplete' | 'pending_if_incomplete'
 
         .. Notes:
         .. ``charge_immediately`` is only available on ``Customer.subscribe()``
@@ -749,6 +752,7 @@ class Customer(StripeModel):
             trial_end=trial_end,
             trial_from_plan=trial_from_plan,
             trial_period_days=trial_period_days,
+            payment_behavior=payment_behavior,
             stripe_account=stripe_account,
         )
 
