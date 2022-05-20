@@ -528,7 +528,9 @@ class Customer(StripeModel):
     date_purged = models.DateTimeField(null=True, editable=False)
 
     class Meta:
-        unique_together = ("subscriber", "livemode", "account")
+        # HACK - remove unique_together since Stripe allows this...
+        # unique_together = ("subscriber", "livemode", "account")
+        pass
 
     def __str__(self):
         if not self.subscriber:
