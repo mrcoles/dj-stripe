@@ -44,10 +44,10 @@ class DjstripePaymentMethod(models.Model):
         return instance
 
     @classmethod
-    def _get_or_create_source(cls, data, source_type):
+    def _get_or_create_source(cls, data, source_type, stripe_account=None):
         try:
             model = cls._model_for_type(source_type)
-            model._get_or_create_from_stripe_object(data)
+            model._get_or_create_from_stripe_object(data, stripe_account=stripe_account)
         except ValueError as e:
             # This may happen if we have source types we don't know about.
             # Let's not make dj-stripe entirely unusable if that happens.
