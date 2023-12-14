@@ -633,7 +633,8 @@ class StripeModel(models.Model):
         from .billing import TaxRate
 
         stripe_account = instance.stripe_account
-        djstripe_account_id = instance.account_id
+        # NOTE - DjstripeInvoiceTotalTaxAmount is not a StripeModel
+        # djstripe_account_id = instance.account_id
 
         pks = []
 
@@ -651,7 +652,7 @@ class StripeModel(models.Model):
                 defaults={
                     "amount": tax_amount_data["amount"],
                     "inclusive": tax_amount_data["inclusive"],
-                    "account_id": djstripe_account_id,
+                    # "account_id": djstripe_account_id,
                 },
             )
 
