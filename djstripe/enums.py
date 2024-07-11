@@ -213,6 +213,7 @@ class BusinessType(Enum):
 class CaptureMethod(Enum):
     automatic = _("Automatic")
     manual = _("Manual")
+    automatic_async = _("Automatic async")
 
 
 class CardCheckResult(Enum):
