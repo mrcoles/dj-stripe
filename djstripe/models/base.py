@@ -6,6 +6,7 @@ from django.apps import apps
 from django.db import IntegrityError, models, transaction
 from django.utils import dateformat, timezone
 from django.utils.encoding import smart_str
+from stripe.error import InvalidRequestError
 
 from .. import settings as djstripe_settings
 from ..fields import JSONField, StripeDateTimeField, StripeIdField
@@ -522,7 +523,32 @@ class StripeModel(models.Model):
                 # Leaving the default field_name ("id") will get_or_create the customer.
                 # If field_name="default_source", we get_or_create the card instead.
                 cls_instance = cls(id=id_)
-                data = cls_instance.api_retrieve(stripe_account=stripe_account)
+                # HACK - fix with with syncing SubscriptionItem (updated January 18, 2025)
+                # copied from https://github.com/dj-stripe/dj-stripe/pull/2020/files
+                try:
+                    data = cls_instance.api_retrieve(stripe_account=stripe_account)
+                except InvalidRequestError as e:
+                    if "a similar object exists in" in str(e):
+                        # HACK around a Stripe bug.
+                        # When a File is retrieved from the Account object,
+                        # a mismatch between live and test mode is possible depending
+                        # on whether the file (usually the logo) was uploaded in live
+                        # or test. Reported to Stripe in August 2020.
+                        # Context: https://github.com/dj-stripe/dj-stripe/issues/830
+                        pass
+                    elif "No such PaymentMethod:" in str(e):
+                        # payment methods (card_… etc) can be irretrievably deleted,
+                        # but still present during sync. For example, if a refund is
+                        # issued on a charge whose payment method has been deleted.
+                        return None, False
+                    elif "Invalid subscription_item id" in str(e):
+                        # subscription items can be irretrievably deleted but still
+                        # be present during sync. For example, if a line item of type subscription is
+                        # removed from the subscription, the invoice generated for that billing period
+                        # will still contain the deleted subscription_item.
+                        return None, False
+                    else:
+                        raise
                 should_expand = False
 
         # The next thing to happen will be the "create from stripe object" call.
