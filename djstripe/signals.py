@@ -3,18 +3,21 @@ signals are sent for each event Stripe sends to the app
 
 Stripe docs for Webhooks: https://stripe.com/docs/webhooks
 """
+
 from django.db.models.signals import pre_delete
 from django.dispatch import Signal, receiver
 
 from . import settings as djstripe_settings
 
-webhook_processing_error = Signal(providing_args=["data", "exception"])
+# webhook_processing_error = Signal(providing_args=["data", "exception"]) # HACK: `providing_args` removed in Django 4.0
+webhook_processing_error = Signal()
 
 # A signal for each Event type. See https://stripe.com/docs/api/events/types
 
 WEBHOOK_SIGNALS = dict(
     [
-        (hook, Signal(providing_args=["event"]))
+        # (hook, Signal(providing_args=["event"])) # HACK: `providing_args` removed in Django 4.0
+        (hook, Signal())
         for hook in [
             # Update this by copy-pasting the "enabled_events" enum values from
             # https://raw.githubusercontent.com/stripe/openapi/master/openapi/spec3.json
@@ -185,6 +188,6 @@ WEBHOOK_SIGNALS = dict(
 
 @receiver(pre_delete, sender=djstripe_settings.get_subscriber_model_string())
 def on_delete_subscriber_purge_customer(instance=None, **kwargs):
-    """ Purge associated customers when the subscriber is deleted. """
+    """Purge associated customers when the subscriber is deleted."""
     for customer in instance.djstripe_customers.all():
         customer.purge()
