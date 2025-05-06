@@ -321,9 +321,11 @@ class BankAccount(LegacySourceMixin, StripeModel):
     customer = models.ForeignKey(
         "Customer", on_delete=models.SET_NULL, null=True, related_name="bank_account"
     )
-    default_for_currency = models.NullBooleanField(
+    default_for_currency = models.BooleanField(
+        null=True,
+        blank=True,
         help_text="Whether this external account is the default account for "
-        "its currency."
+        "its currency.",
     )
     fingerprint = models.CharField(
         max_length=16,

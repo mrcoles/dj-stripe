@@ -30,7 +30,7 @@ class StripeModel(models.Model):
     )
 
     id = StripeIdField(unique=True)
-    livemode = models.NullBooleanField(
+    livemode = models.BooleanField(
         default=None,
         null=True,
         blank=True,
