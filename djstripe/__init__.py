@@ -1,10 +1,10 @@
 """
 dj-stripe - Django + Stripe Made Easy
 """
-import pkg_resources
 from django.apps import AppConfig
+from importlib.metadata import version
 
-__version__ = pkg_resources.require("dj-stripe")[0].version
+__version__ = version("dj-stripe")
 
 default_app_config = "djstripe.DjstripeAppConfig"
 
