@@ -192,6 +192,7 @@ class Account(StripeModel):
         pending_relations=None,
         save=True,
         stripe_account=None,
+        test_no_loop=False, verbose=False
     ):
         """
         Same as StripeModel._get_or_create_from_stripe_object, but performs
