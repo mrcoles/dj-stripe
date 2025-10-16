@@ -258,6 +258,7 @@ class LegacySourceMixin:
         pending_relations=None,
         save=True,
         stripe_account=None,
+        test_no_loop=False, verbose=False
     ):
         is_destination = field_name == 'destination'
         object_is_payout = data.get('object') == 'payout'
@@ -282,6 +283,7 @@ class LegacySourceMixin:
             pending_relations,
             save,
             stripe_account,
+            test_no_loop=test_no_loop, verbose=verbose
         )
 
 

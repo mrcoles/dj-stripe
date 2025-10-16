@@ -1931,6 +1931,7 @@ class Payout(StripeModel):
         current_ids=None,
         pending_relations=None,
         stripe_account=None,
+        test_no_loop=False, verbose=False
     ):
         field_name = field.name
 
@@ -1952,6 +1953,7 @@ class Payout(StripeModel):
             current_ids=current_ids,
             pending_relations=pending_relations,
             stripe_account=stripe_account,
+            test_no_loop=test_no_loop, verbose=verbose
         )
 
 

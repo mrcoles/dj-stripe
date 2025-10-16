@@ -981,7 +981,7 @@ class InvoiceItem(StripeModel):
             )
 
     @classmethod
-    def sync_from_stripe_data(cls, data, stripe_account=None):
+    def sync_from_stripe_data(cls, data, stripe_account=None, test_no_loop=False, verbose=False):
         invoice_data = data.get("invoice")
 
         if invoice_data:
@@ -993,11 +993,11 @@ class InvoiceItem(StripeModel):
                     # we only have the id, fetch the full data
                     invoice_data = Invoice(id=invoice_id).api_retrieve()
                 Invoice.sync_from_stripe_data(
-                    data=invoice_data, stripe_account=stripe_account)
+                    data=invoice_data, stripe_account=stripe_account, test_no_loop=test_no_loop, verbose=verbose)
 
         return super().sync_from_stripe_data(
             data,
-            stripe_account=stripe_account
+            stripe_account=stripe_account, test_no_loop=test_no_loop, verbose=verbose
         )
 
     def __str__(self):

@@ -203,7 +203,8 @@ class StripeModel(models.Model):
 
     @classmethod
     def _stripe_object_to_record(
-        cls, data, current_ids=None, pending_relations=None, stripe_account=None
+        cls, data, current_ids=None, pending_relations=None, stripe_account=None,
+            test_no_loop=False, verbose=False
     ):
         """
         This takes an object, as it is formatted in Stripe's current API for our object
@@ -253,6 +254,7 @@ class StripeModel(models.Model):
                     current_ids=current_ids,
                     pending_relations=pending_relations,
                     stripe_account=stripe_account,
+                    test_no_loop=test_no_loop, verbose=verbose
                 )
                 if skip:
                     continue
@@ -301,6 +303,7 @@ class StripeModel(models.Model):
         current_ids=None,
         pending_relations=None,
         stripe_account=None,
+        test_no_loop=False, verbose=False
     ):
         """
         This converts a stripe API field to the dj stripe object it references,
@@ -325,6 +328,15 @@ class StripeModel(models.Model):
         refetch = False
         skip = False
 
+        if verbose:
+            print(f"_stripe_object_field_to_foreign_key:{field_name}")
+            print(f"* test_no_loop = {test_no_loop}")
+            print(f"* cls = {cls}")
+            print(f"* id_ = {id_}")
+            print(f"* raw_field_data = {raw_field_data}")
+            print(f"* current_ids = {current_ids}")
+            print(f"* issubclass = {issubclass(field.related_model, StripeModel)}")
+
         if issubclass(field.related_model, StripeModel):
             id_ = cls._id_from_data(raw_field_data)
 
@@ -348,11 +360,12 @@ class StripeModel(models.Model):
 
             if not skip:
 
-                # add the id of the current object to the list
-                # of ids being processed.
-                # This will avoid infinite recursive syncs in case a relatedmodel
-                # requests the same object
-                current_ids.add(id_)
+                if test_no_loop:
+                    # add the id of the current object to the list
+                    # of ids being processed.
+                    # This will avoid infinite recursive syncs in case a relatedmodel
+                    # requests the same object
+                    current_ids.add(id_)
 
                 field_data, _ = field.related_model._get_or_create_from_stripe_object(
                     manipulated_data,
@@ -361,11 +374,13 @@ class StripeModel(models.Model):
                     current_ids=current_ids,
                     pending_relations=pending_relations,
                     stripe_account=stripe_account,
+                    test_no_loop=test_no_loop, verbose=verbose
                 )
 
-                # Remove the id of the current object from the list
-                # after it has been created or retrieved
-                current_ids.remove(id_)
+                if test_no_loop:
+                    # Remove the id of the current object from the list
+                    # after it has been created or retrieved
+                    current_ids.remove(id_)
 
         else:
             # eg PaymentMethod, handled in hooks
@@ -433,6 +448,7 @@ class StripeModel(models.Model):
         pending_relations=None,
         save=True,
         stripe_account=None,
+        test_no_loop=False, verbose=False
     ):
         """
         Instantiates a model instance using the provided data object received
@@ -451,12 +467,17 @@ class StripeModel(models.Model):
         :type stripe_account: string
         :returns: The instantiated object.
         """
+        if verbose:
+            print(f"_create_from_stripe_object")
+            print(f"* cls = {cls}")
+            print(f"* current_ids = {current_ids}")
         instance = cls(
             **cls._stripe_object_to_record(
                 data,
                 current_ids=current_ids,
                 pending_relations=pending_relations,
                 stripe_account=stripe_account,
+                test_no_loop=test_no_loop, verbose=verbose
             )
         )
         instance._attach_objects_hook(cls, data, stripe_account=stripe_account)
@@ -480,6 +501,7 @@ class StripeModel(models.Model):
         pending_relations=None,
         save=True,
         stripe_account=None,
+        test_no_loop=False, verbose=False
     ):
         """
 
@@ -584,10 +606,15 @@ class StripeModel(models.Model):
                         pending_relations=pending_relations,
                         save=save,
                         stripe_account=stripe_account,
+                        test_no_loop=test_no_loop, verbose=verbose
                     ),
                     True,
                 )
-        except IntegrityError:
+        except IntegrityError as e:
+            if verbose:
+                print("_get_or_creat_from_stripe_object.IntegrityError")
+                print(f"* e = {e}")
+                print(f"* cls = {cls}")
             # Handle the race condition that something else created the object
             # after the `get` and before `_create_from_stripe_object`.
             # This is common during webhook handling, since Stripe sends
@@ -816,7 +843,7 @@ class StripeModel(models.Model):
             setattr(self, attr, value)
 
     @classmethod
-    def sync_from_stripe_data(cls, data, stripe_account=None):
+    def sync_from_stripe_data(cls, data, stripe_account=None, test_no_loop=False, verbose=False):
         """
         Syncs this object from the stripe data provided.
 
@@ -838,7 +865,8 @@ class StripeModel(models.Model):
             current_ids.add(data_id)
 
         instance, created = cls._get_or_create_from_stripe_object(
-            data, current_ids=current_ids, stripe_account=stripe_account
+            data, current_ids=current_ids, stripe_account=stripe_account,
+            test_no_loop=test_no_loop, verbose=verbose
         )
 
         if not created:
