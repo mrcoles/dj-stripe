@@ -332,10 +332,12 @@ class StripeModel(models.Model):
             print(f"_stripe_object_field_to_foreign_key:{field_name}")
             print(f"* test_no_loop = {test_no_loop}")
             print(f"* cls = {cls}")
-            print(f"* id_ = {id_}")
             print(f"* raw_field_data = {raw_field_data}")
             print(f"* current_ids = {current_ids}")
             print(f"* issubclass = {issubclass(field.related_model, StripeModel)}")
+            if issubclass(field.related_model, StripeModel):
+                id_ = cls._id_from_data(raw_field_data)
+                print(f"* id_ = {id_}")
 
         if issubclass(field.related_model, StripeModel):
             id_ = cls._id_from_data(raw_field_data)
