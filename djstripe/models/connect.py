@@ -192,7 +192,7 @@ class Account(StripeModel):
         pending_relations=None,
         save=True,
         stripe_account=None,
-        test_no_loop=False, verbose=False
+        test_no_loop=True, verbose=False
     ):
         """
         Same as StripeModel._get_or_create_from_stripe_object, but performs
@@ -206,6 +206,7 @@ class Account(StripeModel):
             pending_relations=pending_relations,
             save=save,
             stripe_account=stripe_account,
+            test_no_loop=test_no_loop, verbose=verbose
         )
         instance.remember_mapping()
         return instance, created

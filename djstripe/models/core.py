@@ -1931,7 +1931,7 @@ class Payout(StripeModel):
         current_ids=None,
         pending_relations=None,
         stripe_account=None,
-        test_no_loop=False, verbose=False
+        test_no_loop=True, verbose=False
     ):
         field_name = field.name
 

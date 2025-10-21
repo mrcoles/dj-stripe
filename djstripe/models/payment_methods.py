@@ -665,10 +665,17 @@ class PaymentMethod(StripeModel):
 
     stripe_class = stripe.PaymentMethod
 
-    def _attach_objects_hook(self, cls, data, stripe_account=None):
+    def _attach_objects_hook(self, cls, data, stripe_account=None, skip_attach_customer=False):
         super()._attach_objects_hook(cls, data, stripe_account=stripe_account)
 
-        customer = cls._stripe_object_to_customer(target_cls=Customer, data=data, stripe_account=stripe_account)
+        if skip_attach_customer:
+            # HACK - because of infinite loop sync
+            # issues when syncing customer.default_payment_method
+            return
+
+        customer = cls._stripe_object_to_customer(
+            target_cls=Customer, data=data, stripe_account=stripe_account
+        )
         if customer:
             self.customer = customer
         else:

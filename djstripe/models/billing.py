@@ -981,7 +981,7 @@ class InvoiceItem(StripeModel):
             )
 
     @classmethod
-    def sync_from_stripe_data(cls, data, stripe_account=None, test_no_loop=False, verbose=False):
+    def sync_from_stripe_data(cls, data, stripe_account=None, test_no_loop=True, verbose=False):
         invoice_data = data.get("invoice")
 
         if invoice_data:
