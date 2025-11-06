@@ -660,6 +660,12 @@ class PaymentMethod(StripeModel):
         "on the PaymentMethod with a name matching this value. It contains additional "
         "information specific to the PaymentMethod type.",
     )
+    us_bank_account = JSONField(
+        null=True,
+        blank=True,
+        help_text="If this is a us_bank_account PaymentMethod, this hash contains details "
+        "about the bank account.",
+    )
 
     stripe_class = stripe.PaymentMethod
 
