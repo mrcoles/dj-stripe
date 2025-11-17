@@ -208,6 +208,7 @@ class BankAccountStatus(Enum):
 class BusinessType(Enum):
     individual = _("Individual")
     company = _("Company")
+    corporation = _("Corporation")
 
 
 class CaptureMethod(Enum):
