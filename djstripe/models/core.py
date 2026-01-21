@@ -325,7 +325,8 @@ class Charge(StripeModel):
         stripe_account = self.stripe_account
 
         self.source, _ = DjstripePaymentMethod._get_or_create_source(
-            data=source_data, source_type=source_type,
+            data=source_data,
+            source_type=source_type,
             stripe_account=stripe_account,
         )
 
@@ -363,7 +364,9 @@ class Charge(StripeModel):
             amount=self._calculate_refund_amount(amount=amount), reason=reason
         )
         stripe_account = self.stripe_account
-        return self.__class__.sync_from_stripe_data(charge_obj, stripe_account=stripe_account)
+        return self.__class__.sync_from_stripe_data(
+            charge_obj, stripe_account=stripe_account
+        )
 
     def capture(self):
         """
@@ -376,7 +379,9 @@ class Charge(StripeModel):
 
         captured_charge = self.api_retrieve().capture()
         stripe_account = self.stripe_account
-        return self.__class__.sync_from_stripe_data(captured_charge, stripe_account=stripe_account)
+        return self.__class__.sync_from_stripe_data(
+            captured_charge, stripe_account=stripe_account
+        )
 
     @classmethod
     def _stripe_object_destination_to_account(cls, target_cls, data):
@@ -576,12 +581,17 @@ class Customer(StripeModel):
         kwargs = {}
         if stripe_account:
             # Double underscore to match 'acct_'
-            kwargs['account__id'] = stripe_account
+            kwargs["account__id"] = stripe_account
         else:
-            kwargs['account'] = None
+            kwargs["account"] = None
 
         try:
-            return Customer.objects.get(subscriber=subscriber, livemode=livemode, **kwargs), False
+            return (
+                Customer.objects.get(
+                    subscriber=subscriber, livemode=livemode, **kwargs
+                ),
+                False,
+            )
         except Customer.DoesNotExist:
             action = "create:{}".format(subscriber.pk)
             idempotency_key = djstripe_settings.get_idempotency_key(
@@ -835,9 +845,9 @@ class Customer(StripeModel):
         stripe_charge = Charge._api_create(
             amount=int(amount * 100),  # Convert dollars into cents
             currency=currency,
-            application_fee=int(application_fee * 100)
-            if application_fee
-            else None,  # Convert dollars into cents
+            application_fee=(
+                int(application_fee * 100) if application_fee else None
+            ),  # Convert dollars into cents
             capture=capture,
             description=description,
             destination=destination,
@@ -850,7 +860,9 @@ class Customer(StripeModel):
             stripe_account=stripe_account,
         )
 
-        return Charge.sync_from_stripe_data(stripe_charge, stripe_account=stripe_account)
+        return Charge.sync_from_stripe_data(
+            stripe_charge, stripe_account=stripe_account
+        )
 
     def add_invoice_item(
         self,
@@ -928,7 +940,9 @@ class Customer(StripeModel):
             stripe_account=stripe_account,
         )
 
-        return InvoiceItem.sync_from_stripe_data(stripe_invoiceitem, stripe_account=stripe_account)
+        return InvoiceItem.sync_from_stripe_data(
+            stripe_invoiceitem, stripe_account=stripe_account
+        )
 
     def add_card(self, source, set_default=True):
         """
@@ -975,10 +989,11 @@ class Customer(StripeModel):
         """
         from .payment_methods import PaymentMethod
 
-
         stripe_account = self.stripe_account
         stripe_customer = self.api_retrieve()
-        payment_method = PaymentMethod.attach(payment_method, stripe_customer, stripe_account=stripe_account)
+        payment_method = PaymentMethod.attach(
+            payment_method, stripe_customer, stripe_account=stripe_account
+        )
 
         if set_default:
             stripe_customer["invoice_settings"][
@@ -1041,7 +1056,7 @@ class Customer(StripeModel):
         self.purge()
 
     def _get_valid_subscriptions(self):
-        """ Get a list of this customer's valid subscriptions."""
+        """Get a list of this customer's valid subscriptions."""
 
         return [
             subscription
@@ -1162,7 +1177,9 @@ class Customer(StripeModel):
         from .billing import Invoice
 
         try:
-            invoice = Invoice._api_create(customer=self.id, stripe_account=self.stripe_account)
+            invoice = Invoice._api_create(
+                customer=self.id, stripe_account=self.stripe_account
+            )
             invoice.pay()
             return True
         except InvalidRequestError:  # TODO: Check this for a more
@@ -1170,7 +1187,7 @@ class Customer(StripeModel):
             return False  # There was nothing to invoice
 
     def retry_unpaid_invoices(self):
-        """ Attempt to retry collecting payment on the customer's unpaid invoices."""
+        """Attempt to retry collecting payment on the customer's unpaid invoices."""
 
         self._sync_invoices()
         for invoice in self.invoices.filter(auto_advance=True).exclude(status="paid"):
@@ -1181,7 +1198,7 @@ class Customer(StripeModel):
                     raise
 
     def has_valid_source(self):
-        """ Check whether the customer has a valid payment source."""
+        """Check whether the customer has a valid payment source."""
         return self.default_source is not None
 
     def add_coupon(self, coupon, idempotency_key=None):
@@ -1197,10 +1214,12 @@ class Customer(StripeModel):
         stripe_customer["coupon"] = coupon
         stripe_customer.save(idempotency_key=idempotency_key)
         stripe_account = self.stripe_account
-        return self.__class__.sync_from_stripe_data(stripe_customer, stripe_account=stripe_account)
+        return self.__class__.sync_from_stripe_data(
+            stripe_customer, stripe_account=stripe_account
+        )
 
     def upcoming_invoice(self, **kwargs):
-        """ Gets the upcoming preview invoice (singular) for this customer.
+        """Gets the upcoming preview invoice (singular) for this customer.
 
         See `Invoice.upcoming() <#djstripe.Invoice.upcoming>`__.
 
@@ -1320,7 +1339,9 @@ class Customer(StripeModel):
         for stripe_subscription in Subscription.api_list(
             customer=self.id, status="all", **kwargs
         ):
-            Subscription.sync_from_stripe_data(stripe_subscription, stripe_account=stripe_account)
+            Subscription.sync_from_stripe_data(
+                stripe_subscription, stripe_account=stripe_account
+            )
 
 
 class Dispute(StripeModel):
@@ -1367,7 +1388,8 @@ class Event(StripeModel):
     stripe_dashboard_item_name = "events"
 
     api_version = models.CharField(
-        max_length=15,
+        # HACK - update to match https://github.com/dj-stripe/dj-stripe/pull/1677/changes#diff-b8a557ae6a847fafc05648cbe4d8c2c4913c49773a9028eaca35f3869e979662
+        max_length=64,
         blank=True,
         help_text="the API version at which the event data was "
         "rendered. Blank for old entries only, all new entries will have this value",
@@ -1461,17 +1483,17 @@ class Event(StripeModel):
 
     @cached_property
     def parts(self):
-        """ Gets the event category/verb as a list of parts. """
+        """Gets the event category/verb as a list of parts."""
         return str(self.type).split(".")
 
     @cached_property
     def category(self):
-        """ Gets the event category string (e.g. 'customer'). """
+        """Gets the event category string (e.g. 'customer')."""
         return self.parts[0]
 
     @cached_property
     def verb(self):
-        """ Gets the event past-tense verb string (e.g. 'updated'). """
+        """Gets the event past-tense verb string (e.g. 'updated')."""
         return ".".join(self.parts[1:])
 
     @property
@@ -1934,11 +1956,11 @@ class Payout(StripeModel):
     ):
         field_name = field.name
 
-        if field_name == 'destination':
+        if field_name == "destination":
             raw_field_data = manipulated_data.get(field_name)
             id_ = cls._id_from_data(raw_field_data)
 
-            if id_ and id_.startswith('card_'):
+            if id_ and id_.startswith("card_"):
                 # TODO(connect) - HACK - cannot sync Payouts for cards,
                 # because the foreign key for destination is set up
                 # for BankAccount, so let's skip it for now...
